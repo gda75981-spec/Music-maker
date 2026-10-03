@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Loopbench</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+--bg:#14183a;--panel:#1e2350;--off:#2b3170;--off2:#363d85;--ink:#f1f2ff;--mute:#9aa0d6;--hot:#ff5a8f;--cool:#3fd8c4;--now:#fff}
+@media (prefers-color-scheme:light){:root:not([data-theme="dark"]){--bg:#eceeff;--panel:#fff;--off:#dfe2fb;--off2:#cdd2f5;--ink:#1a1f4d;--mute:#5a60a0;--hot:#e0346e;--cool:#0fa896;--now:#1a1f4d}}
+:root[data-theme="dark"]{--bg:#14183a;--panel:#1e2350;--off:#2b3170;--off2:#363d85;--ink:#f1f2ff;--mute:#9aa0d6;--hot:#ff5a8f;--cool:#3fd8c4;--now:#fff}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Bricolage Grotesque",system-ui,sans-serif;min-height:100vh}
+main{max-width:1100px;margin:0 auto;padding:20px 14px 40px}
+h1{font-size:clamp(2rem,6vw,3.4rem);font-weight:800;letter-spacing:-.03em;margin:0 0 4px}
+.sub{color:var(--mute);margin:0 0 18px;max-width:52ch}
+.bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;background:var(--panel);padding:12px;border-radius:14px;margin-bottom:14px}
+button,.btn{font:inherit;font-weight:700;border:0;border-radius:10px;padding:10px 16px;min-height:44px;background:var(--off);color:var(--ink);cursor:pointer}
+button:focus-visible,.btn:focus-visible,input:focus-visible{outline:3px solid var(--cool);outline-offset:2px}
+#play{background:var(--hot);color:#fff;min-width:96px}
+#play.on{background:var(--cool);color:#06241f}
+.btn.up{background:var(--cool);color:#06241f;display:inline-flex;align-items:center}
+label.f{display:flex;align-items:center;gap:8px;color:var(--mute);font-size:.9rem}
+input[type=range]{accent-color:var(--hot);width:110px}
+#bpm{width:64px;font:inherit;font-weight:700;padding:8px;border-radius:8px;border:2px solid var(--off2);background:var(--bg);color:var(--ink);min-height:44px}
+.grow{flex:1}
+#msg{color:var(--mute);font-size:.9rem;min-height:1.3em;margin:0 0 10px}
+.wrap{overflow-x:auto;background:var(--panel);border-radius:14px;padding:10px 0}
+.row{display:flex;align-items:center;gap:6px;padding:4px 10px;min-width:max-content}
+.lab{position:sticky;left:0;z-index:2;background:var(--panel);width:190px;flex:none;display:flex;flex-direction:column;gap:4px;padding:4px 8px 4px 0}
+.lab .top{display:flex;gap:6px;align-items:center}
+.nm{flex:1;text-align:left;background:none;padding:6px 4px;min-height:36px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:110px}
+.sm{padding:4px 10px;min-height:36px;font-size:.85rem}
+.sm.m.on{background:var(--hot);color:#fff}
+.lab input[type=range]{width:100%}
+.cells{display:flex;gap:5px}
+.c{width:36px;height:52px;border-radius:8px;padding:0;background:var(--off);flex:none}
+.c.g{background:var(--off2)}
+.c.on{background:var(--hot)}
+.row.s .c.on{background:var(--cool)}
+.c.now{box-shadow:inset 0 0 0 3px var(--now)}
+.c:nth-child(4n){margin-right:8px}
+.drop{outline:3px dashed var(--cool);outline-offset:-6px}
+.hint{color:var(--mute);font-size:.85rem;margin-top:12px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style></head>
+<body>
+<main>
+<h1>Loopbench</h1>
+<p class="sub">Build beats in your browser. Tap steps to program drums, or upload your own sounds and loop them.</p>
+<div class="bar">
+<button id="play">Play</button>
+<label class="f">Tempo <input id="bpm" type="number" min="60" max="200" value="104"></label>
+<label class="f">Master <input id="mv" type="range" min="0" max="1" step=".01" value=".8"></label>
+<span class="grow"></span>
+<label class="btn up" tabindex="0">Upload sounds<input id="file" type="file" accept="audio/*" multiple hidden></label>
+<button id="clear">Clear steps</button>
+</div>
+<p id="msg">Drop audio files anywhere on the page to add them as new tracks.</p>
+<div class="wrap" id="grid"></div>
+<p class="hint">Tap a track name to preview it. Uploaded tracks have a pitch slider so one sample can play a melody or bass line.</p>
+</main>
+<script>
+let ctx,master,noise,playing=false,step=0,nextT=0,q=[],timer,raf,bpm=104,uid=0;
+const $=s=>document.querySelector(s);
+const pat=a=>{const r=Array(16).fill(0);a.forEach(i=>r[i]=1);return r};
+const tracks=[
+{id:uid++,name:"Kick",type:"kick",steps:pat([0,4,8,11,12]),vol:.9,mute:false},
+{id:uid++,name:"Snare",type:"snare",steps:pat([4,12]),vol:.7,mute:false},
+{id:uid++,name:"Hi-hat",type:"hat",steps:pat([0,2,4,6,8,10,12,14]),vol:.5,mute:false},
+{id:uid++,name:"Clap",type:"clap",steps:pat([12]),vol:.6,mute:false}];
+function init(){
+ if(ctx){if(ctx.state==="suspended")ctx.resume();return}
+ ctx=new (window.AudioContext||window.webkitAudioContext)();
+ master=ctx.createGain();master.gain.value=+$("#mv").value;master.connect(ctx.destination);
+ noise=ctx.createBuffer(1,ctx.sampleRate,ctx.sampleRate);
+ const d=noise.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;
+}
+function nz(t,type,freq,dur,g,out){
+ const s=ctx.createBufferSource();s.buffer=noise;const f=ctx.createBiquadFilter();f.type=type;f.frequency.value=freq;
+ const e=ctx.createGain();e.gain.setValueAtTime(g,t);e.gain.exponentialRampToValueAtTime(.001,t+dur);
+ s.connect(f).connect(e).connect(out);s.start(t);s.stop(t+dur+.05);
+}
+function voice(tr,t){
+ const out=ctx.createGain();out.gain.value=tr.vol;out.connect(master);
+ if(tr.type==="kick"){
+  const o=ctx.createOscillator(),e=ctx.createGain();o.frequency.setValueAtTime(160,t);o.frequency.exponentialRampToValueAtTime(42,t+.14);
+  e.gain.setValueAtTime(1,t);e.gain.exponentialRampToValueAtTime(.001,t+.4);o.connect(e).connect(out);o.start(t);o.stop(t+.45);
+ }else if(tr.type==="snare"){
+  nz(t,"highpass",1800,.18,.8,out);
+  const o=ctx.createOscillator(),e=ctx.createGain();o.type="triangle";o.frequency.value=190;
+  e.gain.setValueAtTime(.5,t);e.gain.exponentialRampToValueAtTime(.001,t+.1);o.connect(e).connect(out);o.start(t);o.stop(t+.12);
+ }else if(tr.type==="hat"){nz(t,"highpass",7500,.05,.7,out)}
+ else if(tr.type==="clap"){[0,.012,.024].forEach(d=>nz(t+d,"bandpass",1500,.09,.8,out))}
+ else if(tr.buf){
+  const s=ctx.createBufferSource();s.buffer=tr.buf;s.playbackRate.value=Math.pow(2,(tr.pitch||0)/12);s.connect(out);s.start(t);
+ }
+}
+function sched(){
+ while(nextT<ctx.currentTime+.12){
+  tracks.forEach(tr=>{if(!tr.mute&&tr.steps[step])voice(tr,nextT)});
+  q.push({s:step,t:nextT});nextT+=60/bpm/4;step=(step+1)%16;
+ }
+}
+function draw(){
+ let cur=null;while(q.length&&q[0].t<=ctx.currentTime)cur=q.shift().s;
+ if(cur!==null){document.querySelectorAll(".c.now").forEach(c=>c.classList.remove("now"));document.querySelectorAll(".c.k"+cur).forEach(c=>c.classList.add("now"))}
+ raf=requestAnimationFrame(draw);
+}
+function start(){init();playing=true;step=0;q=[];nextT=ctx.currentTime+.05;timer=setInterval(sched,25);draw();$("#play").textContent="Stop";$("#play").classList.add("on")}
+function stop(){playing=false;clearInterval(timer);cancelAnimationFrame(raf);document.querySelectorAll(".c.now").forEach(c=>c.classList.remove("now"));$("#play").textContent="Play";$("#play").classList.remove("on")}
+$("#play").onclick=()=>playing?stop():start();
+$("#bpm").oninput=e=>{bpm=Math.min(200,Math.max(60,+e.target.value||104))};
+$("#mv").oninput=e=>{if(master)master.gain.value=+e.target.value};
+$("#clear").onclick=()=>{tracks.forEach(t=>t.steps.fill(0));render()};
+
+function render(){
+ const g=$("#grid");g.innerHTML="";
+ tracks.forEach(tr=>{
+  const row=document.createElement("div");row.className="row"+(tr.type==="sample"?" s":"");
+  const lab=document.createElement("div");lab.className="lab";
+  const top=document.createElement("div");top.className="top";
+  const nm=document.createElement("button");nm.className="nm";nm.textContent=tr.name;nm.title="Preview "+tr.name;
+  nm.onclick=()=>{init();voice(tr,ctx.currentTime)};
+  const m=document.createElement("button");m.className="sm m"+(tr.mute?" on":"");m.textContent="Mute";
+  m.onclick=()=>{tr.mute=!tr.mute;m.classList.toggle("on",tr.mute)};
+  top.append(nm,m);
+  if(tr.type==="sample"){
+   const x=document.createElement("button");x.className="sm";x.textContent="×";x.setAttribute("aria-label","Remove "+tr.name);
+   x.onclick=()=>{tracks.splice(tracks.indexOf(tr),1);render()};top.append(x);
+  }
+  const v=document.createElement("input");v.type="range";v.min=0;v.max=1;v.step=.01;v.value=tr.vol;v.setAttribute("aria-label",tr.name+" volume");
+  v.oninput=()=>tr.vol=+v.value;
+  lab.append(top,v);
+  if(tr.type==="sample"){
+   const p=document.createElement("input");p.type="range";p.min=-12;p.max=12;p.step=1;p.value=tr.pitch||0;p.setAttribute("aria-label",tr.name+" pitch");p.title="Pitch";
+   p.oninput=()=>tr.pitch=+p.value;lab.append(p);
+  }
+  const cells=document.createElement("div");cells.className="cells";
+  for(let i=0;i<16;i++){
+   const c=document.createElement("button");c.className="c k"+i+(Math.floor(i/4)%2?" g":"")+(tr.steps[i]?" on":"");
+   c.setAttribute("aria-label",tr.name+" step "+(i+1));c.setAttribute("aria-pressed",!!tr.steps[i]);
+   c.onclick=()=>{tr.steps[i]^=1;c.classList.toggle("on",!!tr.steps[i]);c.setAttribute("aria-pressed",!!tr.steps[i]);
+    if(tr.steps[i]){init();if(!playing)voice(tr,ctx.currentTime)}};
+   cells.append(c);
+  }
+  row.append(lab,cells);g.append(row);
+ });
+}
+async function addFiles(files){
+ init();let n=0;
+ for(const f of files){
+  if(!f.type.startsWith("audio/")&&!/\.(wav|mp3|ogg|m4a|flac|aac)$/i.test(f.name)){$("#msg").textContent=f.name+" isn't an audio file. Try WAV, MP3 or OGG.";continue}
+  try{
+   const buf=await ctx.decodeAudioData(await f.arrayBuffer());
+   tracks.push({id:uid++,name:f.name.replace(/\.[^.]+$/,""),type:"sample",buf,steps:Array(16).fill(0),vol:.8,mute:false,pitch:0});n++;
+  }catch(e){$("#msg").textContent="Couldn't read "+f.name+". Try converting it to WAV or MP3."}
+ }
+ if(n){$("#msg").textContent=n+(n>1?" sounds":" sound")+" added. Tap steps on the new "+(n>1?"tracks":"track")+" to place them.";render()}
+}
+$("#file").onchange=e=>{addFiles([...e.target.files]);e.target.value=""};
+document.querySelector("label.up").onkeydown=e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();$("#file").click()}};
+["dragenter","dragover"].forEach(n=>addEventListener(n,e=>{e.preventDefault();document.body.classList.add("drop")}));
+["dragleave","drop"].forEach(n=>addEventListener(n,e=>{e.preventDefault();document.body.classList.remove("drop")}));
+addEventListener("drop",e=>addFiles([...e.dataTransfer.files]));
+addEventListener("keydown",e=>{if(e.code==="Space"&&e.target===document.body){e.preventDefault();playing?stop():start()}});
+render();
+</script>
+</body></html>
